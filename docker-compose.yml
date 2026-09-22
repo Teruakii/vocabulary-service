@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: vocab-app
+    restart: unless-stopped
+    ports:
+      - "8005:8085"
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: vocabulary_db
+    depends_on:
+      - db
+
+  db:
+    image: mysql:8.0
+    container_name: vocab-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: vocabulary_db
+      MYSQL_USER: vocab
+      MYSQL_PASSWORD: vocab123
+    ports:
+      - "3308:3306" 
+    command:
+      - "--default-authentication-plugin=mysql_native_password"
+      - "--character-set-server=utf8mb4"
+      - "--collation-server=utf8mb4_unicode_ci"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    platform: linux/amd64
+    container_name: vocab-phpmyadmin
+    restart: unless-stopped
+    ports:
+      - "8083:80" 
+    environment:
+      PMA_HOST: db
+      PMA_USER: root
+      PMA_PASSWORD: root
+      UPLOAD_LIMIT: 1G
+    depends_on:
+      - db
+
+volumes:
+  mysql_data:
