@@ -89,3 +89,8 @@ func (m *MockIdentityRepository) DeleteIdentity(ctx context.Context, id uint64) 
 	args := m.Called(ctx, id)
 	return args.Error(0)
 }
+
+func (m *MockIdentityRepository) DeleteIdentitiesByUser(ctx context.Context, userID uint64) error {
+	args := m.Called(ctx, userID)
+	return args.Error(0)
+}

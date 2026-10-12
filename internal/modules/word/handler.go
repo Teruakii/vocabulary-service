@@ -160,7 +160,12 @@ func (h *Handler) Update(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	response.OK(c, http.StatusOK, w)
+	updated, err := h.service.GetByID(c.Request.Context(), userID, id)
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	response.OK(c, http.StatusOK, updated)
 }
 
 func (h *Handler) Delete(c *gin.Context) {

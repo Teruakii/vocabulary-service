@@ -8,10 +8,13 @@ import (
 type Repository interface {
 	Create(ctx context.Context, uw *UserWord) error
 	GetByID(ctx context.Context, id uint64) (*UserWord, error)
-	GetByUserAndWord(ctx context.Context, userID, wordID uint64) (*UserWord, error)
 	ListByUser(ctx context.Context, userID uint64, status Status, categoryID *uint64, limit, offset int) ([]UserWordDetail, bool, error)
 	ListDue(ctx context.Context, userID uint64, before time.Time, limit int) ([]UserWordDetail, error)
-	Update(ctx context.Context, uw *UserWord) error
+	// ReviewByID and ReviewByWord apply one review to the user's row while it is
+	// locked, so two reviews of the same word cannot both start from the same
+	// state. A row the user does not own is ErrNotFound.
+	ReviewByID(ctx context.Context, userID, id uint64, apply func(*UserWord)) (*UserWord, error)
+	ReviewByWord(ctx context.Context, userID, wordID uint64, apply func(*UserWord)) (*UserWord, error)
 	Delete(ctx context.Context, id uint64) error
 }
 

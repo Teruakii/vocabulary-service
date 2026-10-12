@@ -10,5 +10,6 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler, tokens middleware.TokenVeri
 	s := rg.Group("/stats", middleware.RequireAuth(tokens))
 	{
 		s.GET("/me", h.Me)
+		s.GET("/activity", h.Activity)
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	// Embedded zoneinfo, so TZ works in an image without OS zone files.
+	_ "time/tzdata"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -18,6 +20,7 @@ import (
 	"vocabulary-service/internal/infra/db/mysql"
 	"vocabulary-service/internal/infra/jwt"
 	"vocabulary-service/internal/infra/logs"
+	"vocabulary-service/internal/infra/mail"
 	"vocabulary-service/internal/infra/oauth"
 
 	"vocabulary-service/internal/modules/auth"
@@ -87,9 +90,15 @@ func runMigrations(db *gorm.DB) {
 		TableName() string
 	}
 
+	if err := dedupeUserWords(db); err != nil {
+		log.Fatalf("failed to merge duplicate user words: %v", err)
+	}
+
 	models := []Model{
 		&auth.User{},
 		&auth.Identity{},
+		&auth.Session{},
+		&auth.PasswordReset{},
 		&word.Word{},
 		&userword.UserWord{},
 		&category.Category{},
@@ -97,6 +106,7 @@ func runMigrations(db *gorm.DB) {
 		&quiz.Quiz{},
 		&quiz.Question{},
 		&stats.UserStats{},
+		&stats.DailyActivity{},
 	}
 
 	for _, model := range models {
@@ -104,6 +114,49 @@ func runMigrations(db *gorm.DB) {
 			log.Fatalf("failed to migrate %T: %v", model, err)
 		}
 	}
+}
+
+// dedupeUserWords merges duplicate (user_id, word_id) rows that older builds
+// allowed, so AutoMigrate can add the unique index. The oldest row of each
+// group is kept and the duplicates' category tags move onto it.
+func dedupeUserWords(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&userword.UserWord{}) {
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		var dups []struct {
+			DupID  uint64
+			KeepID uint64
+		}
+		if err := tx.Raw(`SELECT d.user_word_id AS dup_id, k.keep_id
+			FROM user_word d
+			JOIN (SELECT user_id, word_id, MIN(user_word_id) AS keep_id
+			      FROM user_word GROUP BY user_id, word_id HAVING COUNT(*) > 1) k
+			  ON k.user_id = d.user_id AND k.word_id = d.word_id
+			WHERE d.user_word_id <> k.keep_id`).Scan(&dups).Error; err != nil {
+			return err
+		}
+		hasTags := tx.Migrator().HasTable(&category.Tag{})
+		for _, d := range dups {
+			if hasTags {
+				// IGNORE skips tags the kept row already has; the delete below
+				// drops those leftovers.
+				if err := tx.Exec("UPDATE IGNORE vocab_tags SET vocab_id = ? WHERE vocab_id = ?", d.KeepID, d.DupID).Error; err != nil {
+					return err
+				}
+				if err := tx.Exec("DELETE FROM vocab_tags WHERE vocab_id = ?", d.DupID).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Exec("DELETE FROM user_word WHERE user_word_id = ?", d.DupID).Error; err != nil {
+				return err
+			}
+		}
+		if len(dups) > 0 {
+			log.Printf("merged %d duplicate user word(s)", len(dups))
+		}
+		return nil
+	})
 }
 
 func setupRouter(env *config.Environment, db *gorm.DB, signer *jwt.Signer) *gin.Engine {
@@ -114,6 +167,11 @@ func setupRouter(env *config.Environment, db *gorm.DB, signer *jwt.Signer) *gin.
 	logger := logs.New()
 
 	router := gin.New()
+	// Use the real TCP peer as the client IP. Trusting X-Forwarded-For from
+	// anyone would let a client fake its IP and dodge the login limiter.
+	if err := router.SetTrustedProxies(nil); err != nil {
+		log.Fatalf("set trusted proxies: %v", err)
+	}
 	router.Use(gin.Recovery(), logs.GinMiddleware(logger))
 
 	router.GET("/health", func(c *gin.Context) {
@@ -129,15 +187,30 @@ func setupRouter(env *config.Environment, db *gorm.DB, signer *jwt.Signer) *gin.
 	secureCookies := !env.IsDevelopment()
 
 	var googleClient *oauth.GoogleClient
-	if env.GOOGLE_OAUTH_CLIENT_ID != "" && env.GOOGLE_OAUTH_CLIENT_SECRET != "" {
+	if env.GOOGLE_OAUTH_CLIENT_ID != "" && env.GOOGLE_OAUTH_CLIENT_SECRET != "" && env.GOOGLE_OAUTH_REDIRECT_URL != "" {
 		googleClient = oauth.NewGoogleClient(
 			env.GOOGLE_OAUTH_CLIENT_ID,
 			env.GOOGLE_OAUTH_CLIENT_SECRET,
 			env.GOOGLE_OAUTH_REDIRECT_URL,
 		)
+		log.Printf("google oauth enabled (redirect: %s)", env.GOOGLE_OAUTH_REDIRECT_URL)
+	} else {
+		log.Println("google oauth disabled: set GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET and GOOGLE_OAUTH_REDIRECT_URL")
 	}
 
-	authService := auth.InitModule(db, signer, refreshTTL, secureCookies, googleClient, api)
+	var mailer mail.Mailer
+	switch {
+	case env.SMTP_HOST != "":
+		mailer = mail.NewSMTP(env.SMTP_HOST, env.SMTP_PORT, env.SMTP_USERNAME, env.SMTP_PASSWORD, env.SMTP_FROM)
+		log.Printf("password reset email via %s:%s", env.SMTP_HOST, env.SMTP_PORT)
+	case env.IsDevelopment():
+		mailer = mail.Log{}
+		log.Println("password reset email is logged, not sent (development)")
+	default:
+		log.Println("password reset disabled: set SMTP_HOST and SMTP_FROM")
+	}
+
+	authService := auth.InitModule(db, signer, refreshTTL, secureCookies, googleClient, env.FRONTEND_URL, env.ADMIN_EMAILS, mailer, api)
 	wordService := word.InitModule(db, authService, api)
 	category.InitModule(db, signer, api)
 	statsService := stats.InitModule(db, signer, api)

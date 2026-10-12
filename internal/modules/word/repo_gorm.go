@@ -55,8 +55,8 @@ func (r *WordRepoGorm) GetByWord(ctx context.Context, callerID uint64, wordStr s
 	return &word, nil
 }
 
-func (r *WordRepoGorm) ExistsForOwner(ctx context.Context, ownerUserID *uint64, wordStr string) (bool, error) {
-	q := r.db.WithContext(ctx).Model(&Word{}).Where("word = ?", wordStr)
+func (r *WordRepoGorm) ExistsForOwner(ctx context.Context, ownerUserID *uint64, wordStr string, excludeID uint64) (bool, error) {
+	q := r.db.WithContext(ctx).Model(&Word{}).Where("word = ? AND word_id <> ?", wordStr, excludeID)
 	if ownerUserID == nil {
 		q = q.Where("owner_user_id IS NULL")
 	} else {
@@ -122,13 +122,23 @@ func (r *WordRepoGorm) Update(ctx context.Context, word *Word) error {
 	return nil
 }
 
+// Delete refuses words still referenced by a user's list or a quiz. The
+// schema has no foreign keys, so the check is done here.
 func (r *WordRepoGorm) Delete(ctx context.Context, id uint64) error {
-	result := r.db.WithContext(ctx).Delete(&Word{}, id)
+	db := r.db.WithContext(ctx)
+	var inUse int64
+	if err := db.Raw(`SELECT
+		EXISTS (SELECT 1 FROM user_word WHERE word_id = ?) +
+		EXISTS (SELECT 1 FROM quiz_question WHERE word_id = ?)`, id, id).
+		Scan(&inUse).Error; err != nil {
+		return fmt.Errorf("check word usage: %w", err)
+	}
+	if inUse > 0 {
+		return constants.ErrWordInUse
+	}
+
+	result := db.Delete(&Word{}, id)
 	if result.Error != nil {
-		var mysqlErr *mysql.MySQLError
-		if errors.As(result.Error, &mysqlErr) && mysqlErr.Number == 1451 {
-			return constants.ErrWordInUse
-		}
 		return fmt.Errorf("delete word: %w", result.Error)
 	}
 	if result.RowsAffected == 0 {

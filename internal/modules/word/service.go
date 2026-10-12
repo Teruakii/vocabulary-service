@@ -25,7 +25,7 @@ func (s *service) AddWord(ctx context.Context, ownerUserID *uint64, word, meanin
 		return nil, constants.ErrWordEmpty
 	}
 
-	dup, err := s.repo.ExistsForOwner(ctx, ownerUserID, word)
+	dup, err := s.repo.ExistsForOwner(ctx, ownerUserID, word, 0)
 	if err != nil {
 		return nil, fmt.Errorf("check duplicate word %q: %w", word, err)
 	}
@@ -79,9 +79,7 @@ func (s *service) GetByWord(ctx context.Context, callerID uint64, word string) (
 }
 
 func (s *service) GetAllWord(ctx context.Context, callerID uint64, limit, offset int) ([]Word, bool, error) {
-	if limit <= 0 {
-		limit = constants.DefaultListLimit
-	}
+	limit = constants.ListLimit(limit)
 	if offset < 0 {
 		offset = 0
 	}
@@ -98,20 +96,30 @@ func (s *service) UpdateWord(ctx context.Context, callerID uint64, isAdmin bool,
 	if word.Word != "" {
 		trimmed := strings.TrimSpace(word.Word)
 		if trimmed == "" {
-			return fmt.Errorf("word must not be empty")
+			return constants.ErrWordEmpty
 		}
 		word.Word = trimmed
 	}
 	if word.Meaning != "" {
 		trimmed := strings.TrimSpace(word.Meaning)
 		if trimmed == "" {
-			return fmt.Errorf("meaning must not be empty")
+			return constants.ErrMeaningEmpty
 		}
 		word.Meaning = trimmed
 	}
 
-	if err := s.assertCanModify(ctx, callerID, isAdmin, word.ID); err != nil {
+	current, err := s.getModifiable(ctx, callerID, isAdmin, word.ID)
+	if err != nil {
 		return err
+	}
+	if word.Word != "" {
+		dup, err := s.repo.ExistsForOwner(ctx, current.OwnerUserID, word.Word, word.ID)
+		if err != nil {
+			return fmt.Errorf("check duplicate word %q: %w", word.Word, err)
+		}
+		if dup {
+			return constants.ErrWordDuplicate
+		}
 	}
 
 	if err := s.repo.Update(ctx, word); err != nil {
@@ -124,7 +132,7 @@ func (s *service) UpdateWord(ctx context.Context, callerID uint64, isAdmin bool,
 }
 
 func (s *service) Delete(ctx context.Context, callerID uint64, isAdmin bool, id uint64) error {
-	if err := s.assertCanModify(ctx, callerID, isAdmin, id); err != nil {
+	if _, err := s.getModifiable(ctx, callerID, isAdmin, id); err != nil {
 		return err
 	}
 	if err := s.repo.Delete(ctx, id); err != nil {
@@ -136,22 +144,22 @@ func (s *service) Delete(ctx context.Context, callerID uint64, isAdmin bool, id 
 	return nil
 }
 
-func (s *service) assertCanModify(ctx context.Context, callerID uint64, isAdmin bool, id uint64) error {
+func (s *service) getModifiable(ctx context.Context, callerID uint64, isAdmin bool, id uint64) (*Word, error) {
 	w, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, constants.ErrNotFound) {
-			return constants.ErrWordNotFound
+			return nil, constants.ErrWordNotFound
 		}
-		return fmt.Errorf("get word %d: %w", id, err)
+		return nil, fmt.Errorf("get word %d: %w", id, err)
 	}
 	if w.IsGlobal() {
 		if !isAdmin {
-			return constants.ErrWordForbidden
+			return nil, constants.ErrWordForbidden
 		}
-		return nil
+		return w, nil
 	}
 	if *w.OwnerUserID != callerID {
-		return constants.ErrWordForbidden
+		return nil, constants.ErrWordForbidden
 	}
-	return nil
+	return w, nil
 }

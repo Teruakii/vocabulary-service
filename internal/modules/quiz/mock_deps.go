@@ -20,6 +20,14 @@ func (m *mockWordsService) AddWord(ctx context.Context, userID, wordID uint64) (
 	return args.Get(0).(*userword.UserWord), args.Error(1)
 }
 
+func (m *mockWordsService) AddCustomWord(ctx context.Context, userID uint64, word, meaning string) (*userword.UserWord, error) {
+	args := m.Called(ctx, userID, word, meaning)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*userword.UserWord), args.Error(1)
+}
+
 func (m *mockWordsService) GetByID(ctx context.Context, userID, id uint64) (*userword.UserWord, error) {
 	args := m.Called(ctx, userID, id)
 	if args.Get(0) == nil {
@@ -28,8 +36,8 @@ func (m *mockWordsService) GetByID(ctx context.Context, userID, id uint64) (*use
 	return args.Get(0).(*userword.UserWord), args.Error(1)
 }
 
-func (m *mockWordsService) List(ctx context.Context, userID uint64, status userword.Status, limit, offset int) ([]userword.UserWordDetail, bool, error) {
-	args := m.Called(ctx, userID, status, limit, offset)
+func (m *mockWordsService) List(ctx context.Context, userID uint64, status userword.Status, categoryID *uint64, limit, offset int) ([]userword.UserWordDetail, bool, error) {
+	args := m.Called(ctx, userID, status, categoryID, limit, offset)
 	var items []userword.UserWordDetail
 	if args.Get(0) != nil {
 		items = args.Get(0).([]userword.UserWordDetail)

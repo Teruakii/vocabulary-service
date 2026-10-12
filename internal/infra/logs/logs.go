@@ -19,10 +19,9 @@ func New() *slog.Logger {
 func GinMiddleware(logger *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
+		// The query is left out: the Google callback carries a one-time code
+		// and state in it, and the access log should not hold either.
 		path := c.Request.URL.Path
-		if raw := c.Request.URL.RawQuery; raw != "" {
-			path = path + "?" + raw
-		}
 
 		c.Next()
 

@@ -49,15 +49,21 @@ func (r *RepoGorm) ListVisibleToUser(ctx context.Context, userID uint64) ([]Cate
 	return items, nil
 }
 
+// Delete removes the category and its tags in one transaction.
 func (r *RepoGorm) Delete(ctx context.Context, id uint64) error {
-	result := r.db.WithContext(ctx).Delete(&Category{}, id)
-	if result.Error != nil {
-		return fmt.Errorf("delete category: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return constants.ErrNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("category_id = ?", id).Delete(&Tag{}).Error; err != nil {
+			return fmt.Errorf("delete category tags: %w", err)
+		}
+		result := tx.Delete(&Category{}, id)
+		if result.Error != nil {
+			return fmt.Errorf("delete category: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return constants.ErrNotFound
+		}
+		return nil
+	})
 }
 
 func (r *RepoGorm) Tag(ctx context.Context, vocabID, categoryID uint64) error {
@@ -111,11 +117,12 @@ func (r *RepoGorm) VocabBelongsToUser(ctx context.Context, vocabID, userID uint6
 	return count > 0, nil
 }
 
-func (r *RepoGorm) CountTagged(ctx context.Context, categoryID uint64) (int, error) {
+func (r *RepoGorm) CountTagged(ctx context.Context, categoryID, userID uint64) (int, error) {
 	var count int64
 	err := r.db.WithContext(ctx).
 		Model(&Tag{}).
-		Where("category_id = ?", categoryID).
+		Joins("JOIN user_word ON user_word.user_word_id = vocab_tags.vocab_id").
+		Where("vocab_tags.category_id = ? AND user_word.user_id = ?", categoryID, userID).
 		Count(&count).Error
 	if err != nil {
 		return 0, fmt.Errorf("count tagged words for category %d: %w", categoryID, err)

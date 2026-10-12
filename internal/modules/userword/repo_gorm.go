@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"vocabulary-service/internal/constants"
 )
@@ -37,20 +38,6 @@ func (r *UserWordRepoGorm) GetByID(ctx context.Context, id uint64) (*UserWord, e
 			return nil, constants.ErrNotFound
 		}
 		return nil, fmt.Errorf("get user_word by id: %w", err)
-	}
-	return &uw, nil
-}
-
-func (r *UserWordRepoGorm) GetByUserAndWord(ctx context.Context, userID, wordID uint64) (*UserWord, error) {
-	var uw UserWord
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND word_id = ?", userID, wordID).
-		First(&uw).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, constants.ErrNotFound
-		}
-		return nil, fmt.Errorf("get user_word by user+word: %w", err)
 	}
 	return &uw, nil
 }
@@ -111,27 +98,51 @@ func (r *UserWordRepoGorm) ListDue(ctx context.Context, userID uint64, before ti
 	return items, nil
 }
 
-func (r *UserWordRepoGorm) Update(ctx context.Context, uw *UserWord) error {
-	result := r.db.WithContext(ctx).Model(&UserWord{}).
-		Where("user_word_id = ?", uw.ID).
-		Select("Status", "EaseFactor", "IntervalDays", "Repetitions", "NextReviewAt", "LastReviewedAt").
-		Updates(uw)
-	if result.Error != nil {
-		return fmt.Errorf("update user_word: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return constants.ErrNotFound
-	}
-	return nil
+func (r *UserWordRepoGorm) ReviewByID(ctx context.Context, userID, id uint64, apply func(*UserWord)) (*UserWord, error) {
+	return r.review(ctx, "user_word_id = ? AND user_id = ?", id, userID, apply)
 }
 
+func (r *UserWordRepoGorm) ReviewByWord(ctx context.Context, userID, wordID uint64, apply func(*UserWord)) (*UserWord, error) {
+	return r.review(ctx, "word_id = ? AND user_id = ?", wordID, userID, apply)
+}
+
+func (r *UserWordRepoGorm) review(ctx context.Context, where string, key, userID uint64, apply func(*UserWord)) (*UserWord, error) {
+	var uw UserWord
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(where, key, userID).First(&uw).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return constants.ErrNotFound
+			}
+			return fmt.Errorf("lock user_word: %w", err)
+		}
+		apply(&uw)
+		if err := tx.Model(&uw).
+			Select("Status", "EaseFactor", "IntervalDays", "Repetitions", "NextReviewAt", "LastReviewedAt").
+			Updates(&uw).Error; err != nil {
+			return fmt.Errorf("save user_word review: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &uw, nil
+}
+
+// Delete also drops the word's category tags; left behind they would still
+// count toward the category's word limit.
 func (r *UserWordRepoGorm) Delete(ctx context.Context, id uint64) error {
-	result := r.db.WithContext(ctx).Delete(&UserWord{}, id)
-	if result.Error != nil {
-		return fmt.Errorf("delete user_word: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return constants.ErrNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("DELETE FROM vocab_tags WHERE vocab_id = ?", id).Error; err != nil {
+			return fmt.Errorf("delete user_word tags: %w", err)
+		}
+		result := tx.Delete(&UserWord{}, id)
+		if result.Error != nil {
+			return fmt.Errorf("delete user_word: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return constants.ErrNotFound
+		}
+		return nil
+	})
 }

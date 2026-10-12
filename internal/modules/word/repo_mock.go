@@ -40,8 +40,8 @@ func (m *MockRepository) List(ctx context.Context, callerID uint64, limit, offse
 	return words, args.Bool(1), args.Error(2)
 }
 
-func (m *MockRepository) ExistsForOwner(ctx context.Context, ownerUserID *uint64, wordStr string) (bool, error) {
-	args := m.Called(ctx, ownerUserID, wordStr)
+func (m *MockRepository) ExistsForOwner(ctx context.Context, ownerUserID *uint64, wordStr string, excludeID uint64) (bool, error) {
+	args := m.Called(ctx, ownerUserID, wordStr, excludeID)
 	return args.Bool(0), args.Error(1)
 }
 

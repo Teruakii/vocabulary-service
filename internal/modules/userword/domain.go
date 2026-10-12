@@ -12,8 +12,8 @@ const (
 
 type UserWord struct {
 	ID             uint64     `gorm:"primaryKey;autoIncrement;column:user_word_id" json:"id"`
-	UserID         uint64     `gorm:"column:user_id;not null" json:"userId"`
-	WordID         uint64     `gorm:"column:word_id;not null" json:"wordId"`
+	UserID         uint64     `gorm:"column:user_id;not null;uniqueIndex:idx_user_word_user_word" json:"userId"`
+	WordID         uint64     `gorm:"column:word_id;not null;uniqueIndex:idx_user_word_user_word" json:"wordId"`
 	Status         Status     `gorm:"column:status;not null;default:new" json:"status"`
 	EaseFactor     float64    `gorm:"column:ease_factor;not null;default:2.50" json:"easeFactor"`
 	IntervalDays   uint       `gorm:"column:interval_days;not null;default:0" json:"intervalDays"`

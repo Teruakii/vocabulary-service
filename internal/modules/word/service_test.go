@@ -16,7 +16,7 @@ func TestAddWord_Personal(t *testing.T) {
 	svc := NewService(repo)
 	owner := u64(7)
 
-	repo.On("ExistsForOwner", context.Background(), owner, "apple").Return(false, nil)
+	repo.On("ExistsForOwner", context.Background(), owner, "apple", uint64(0)).Return(false, nil)
 	repo.On("Create", context.Background(), &Word{Word: "apple", Meaning: "a fruit", OwnerUserID: owner}).Return(nil)
 
 	w, err := svc.AddWord(context.Background(), owner, "apple", "a fruit")
@@ -31,7 +31,7 @@ func TestAddWord_Global_Duplicate(t *testing.T) {
 	repo := new(MockRepository)
 	svc := NewService(repo)
 
-	repo.On("ExistsForOwner", context.Background(), (*uint64)(nil), "apple").Return(true, nil)
+	repo.On("ExistsForOwner", context.Background(), (*uint64)(nil), "apple", uint64(0)).Return(true, nil)
 
 	_, err := svc.AddWord(context.Background(), nil, "apple", "a fruit")
 
@@ -226,5 +226,46 @@ func TestDelete_NotFound(t *testing.T) {
 	err := svc.Delete(context.Background(), 1, false, 99)
 
 	assert.ErrorIs(t, err, constants.ErrWordNotFound)
+	repo.AssertExpectations(t)
+}
+
+func TestUpdateWord_RenameToExistingWord_Duplicate(t *testing.T) {
+	repo := new(MockRepository)
+	svc := NewService(repo)
+
+	owner := u64(9)
+	repo.On("GetByID", context.Background(), uint64(1)).Return(&Word{ID: 1, Word: "aple", OwnerUserID: owner}, nil)
+	repo.On("ExistsForOwner", context.Background(), owner, "apple", uint64(1)).Return(true, nil)
+
+	err := svc.UpdateWord(context.Background(), 9, false, &Word{ID: 1, Word: "apple"})
+
+	assert.ErrorIs(t, err, constants.ErrWordDuplicate)
+	repo.AssertNotCalled(t, "Update")
+}
+
+func TestUpdateWord_Rename_ChecksOwnersWordsExcludingItself(t *testing.T) {
+	repo := new(MockRepository)
+	svc := NewService(repo)
+
+	w := &Word{ID: 1, Word: "Apple"}
+	repo.On("GetByID", context.Background(), uint64(1)).Return(&Word{ID: 1, Word: "apple", OwnerUserID: nil}, nil)
+	repo.On("ExistsForOwner", context.Background(), (*uint64)(nil), "Apple", uint64(1)).Return(false, nil)
+	repo.On("Update", context.Background(), w).Return(nil)
+
+	err := svc.UpdateWord(context.Background(), 8, true, w)
+
+	assert.NoError(t, err)
+	repo.AssertExpectations(t)
+}
+
+func TestGetAllWord_CapsLimit(t *testing.T) {
+	repo := new(MockRepository)
+	svc := NewService(repo)
+
+	repo.On("List", context.Background(), uint64(1), constants.MaxListLimit, 0).Return([]Word{}, false, nil)
+
+	_, _, err := svc.GetAllWord(context.Background(), 1, 1_000_000, 0)
+
+	assert.NoError(t, err)
 	repo.AssertExpectations(t)
 }

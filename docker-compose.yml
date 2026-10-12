@@ -7,12 +7,18 @@ services:
     restart: unless-stopped
     ports:
       - "8005:8085"
+    # Secrets come from .env at runtime; they are not baked into the image.
+    env_file:
+      - .env
     environment:
+      PORT: 8085
       DB_HOST: db
       DB_PORT: 3306
       DB_USER: root
       DB_PASSWORD: root
       DB_NAME: vocabulary_db
+      # Streaks and daily activity count calendar days in local time.
+      TZ: Asia/Bangkok
     depends_on:
       - db
 
@@ -26,7 +32,7 @@ services:
       MYSQL_USER: vocab
       MYSQL_PASSWORD: vocab123
     ports:
-      - "3308:3306" 
+      - "3308:3306"  
     command:
       - "--default-authentication-plugin=mysql_native_password"
       - "--character-set-server=utf8mb4"

@@ -87,8 +87,7 @@ func TestAnswer_Correct_IncrementsScoreAndFeedsSRS_NoAutoComplete(t *testing.T) 
 		Question: Question{ID: 100, QuizID: 1, WordID: 42, QuestionType: QuestionTyped},
 		Word:     "apple", Meaning: "a fruit",
 	}, nil)
-	repo.On("SaveAnswer", context.Background(), uint64(100), "a fruit", true).Return(nil)
-	repo.On("IncrementScore", context.Background(), uint64(1)).Return(nil)
+	repo.On("SaveAnswer", context.Background(), uint64(1), uint64(100), "A Fruit", true).Return(nil)
 	repo.On("CountUnanswered", context.Background(), uint64(1)).Return(2, nil)
 	words.On("ReviewByWord", context.Background(), uint64(1), uint64(42), 4).
 		Return(&userword.UserWord{}, nil)
@@ -112,9 +111,9 @@ func TestAnswer_Incorrect_AutoCompletesAndRecordsStats(t *testing.T) {
 		Question: Question{ID: 100, QuizID: 1, WordID: 42},
 		Word:     "apple", Meaning: "a fruit",
 	}, nil)
-	repo.On("SaveAnswer", context.Background(), uint64(100), "a vegetable", false).Return(nil)
+	repo.On("SaveAnswer", context.Background(), uint64(1), uint64(100), "a vegetable", false).Return(nil)
 	repo.On("CountUnanswered", context.Background(), uint64(1)).Return(0, nil)
-	repo.On("CompleteQuiz", context.Background(), uint64(1)).Return(nil)
+	repo.On("CompleteQuiz", context.Background(), uint64(1)).Return(true, nil)
 	stats.On("RecordQuizCompleted", context.Background(), uint64(1)).Return(nil)
 	words.On("ReviewByWord", context.Background(), uint64(1), uint64(42), 1).
 		Return(&userword.UserWord{}, nil)
@@ -123,7 +122,6 @@ func TestAnswer_Incorrect_AutoCompletesAndRecordsStats(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.False(t, *view.IsCorrect)
-	repo.AssertNotCalled(t, "IncrementScore")
 	repo.AssertExpectations(t)
 	stats.AssertExpectations(t)
 }
@@ -138,6 +136,26 @@ func TestAnswer_QuizAlreadyCompleted(t *testing.T) {
 
 	assert.ErrorIs(t, err, constants.ErrQuizCompleted)
 	repo.AssertNotCalled(t, "GetQuestion")
+}
+
+// Complete can finish the quiz between the completed check above and the
+// write; the repo refuses the answer then, and nothing else may happen.
+func TestAnswer_QuizCompletedWhileAnswering(t *testing.T) {
+	repo, words, _, svc := newTestService()
+
+	repo.On("GetQuiz", context.Background(), uint64(1)).Return(&Quiz{ID: 1, UserID: 1}, nil)
+	repo.On("GetQuestion", context.Background(), uint64(100)).Return(&questionWithWord{
+		Question: Question{ID: 100, QuizID: 1, WordID: 42},
+		Meaning:  "a fruit",
+	}, nil)
+	repo.On("SaveAnswer", context.Background(), uint64(1), uint64(100), "a fruit", true).
+		Return(constants.ErrQuizCompleted)
+
+	_, err := svc.Answer(context.Background(), 1, 1, 100, "a fruit")
+
+	assert.ErrorIs(t, err, constants.ErrQuizCompleted)
+	repo.AssertNotCalled(t, "CountUnanswered")
+	words.AssertNotCalled(t, "ReviewByWord")
 }
 
 func TestAnswer_QuestionFromDifferentQuiz(t *testing.T) {
@@ -177,8 +195,7 @@ func TestAnswer_SRSFailureDoesNotFailTheAnswer(t *testing.T) {
 		Question: Question{ID: 100, QuizID: 1, WordID: 42},
 		Meaning:  "a fruit",
 	}, nil)
-	repo.On("SaveAnswer", context.Background(), uint64(100), "a fruit", true).Return(nil)
-	repo.On("IncrementScore", context.Background(), uint64(1)).Return(nil)
+	repo.On("SaveAnswer", context.Background(), uint64(1), uint64(100), "a fruit", true).Return(nil)
 	repo.On("CountUnanswered", context.Background(), uint64(1)).Return(1, nil)
 	words.On("ReviewByWord", context.Background(), uint64(1), uint64(42), mock.Anything).
 		Return(nil, constants.ErrUserWordNotFound)
@@ -207,7 +224,7 @@ func TestComplete_TransitionsAndRecordsStats(t *testing.T) {
 	repo, _, stats, svc := newTestService()
 
 	repo.On("GetQuiz", context.Background(), uint64(1)).Return(&Quiz{ID: 1, UserID: 1}, nil)
-	repo.On("CompleteQuiz", context.Background(), uint64(1)).Return(nil)
+	repo.On("CompleteQuiz", context.Background(), uint64(1)).Return(true, nil)
 	stats.On("RecordQuizCompleted", context.Background(), uint64(1)).Return(nil)
 	repo.On("ListQuestions", context.Background(), uint64(1)).Return([]questionWithWord{}, nil)
 
@@ -216,4 +233,15 @@ func TestComplete_TransitionsAndRecordsStats(t *testing.T) {
 	assert.NoError(t, err)
 	repo.AssertExpectations(t)
 	stats.AssertExpectations(t)
+}
+
+func TestList_CapsLimit(t *testing.T) {
+	repo, _, _, svc := newTestService()
+
+	repo.On("ListQuizzesByUser", context.Background(), uint64(1), constants.MaxListLimit, 0).Return([]Quiz{}, false, nil)
+
+	_, _, err := svc.List(context.Background(), 1, 1_000_000, 0)
+
+	assert.NoError(t, err)
+	repo.AssertExpectations(t)
 }

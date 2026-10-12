@@ -9,11 +9,10 @@ type Repository interface {
 	GetQuestion(ctx context.Context, id uint64) (*questionWithWord, error)
 	ListQuestions(ctx context.Context, quizID uint64) ([]questionWithWord, error)
 	ListQuizzesByUser(ctx context.Context, userID uint64, limit, offset int) ([]Quiz, bool, error)
-	SaveAnswer(ctx context.Context, questionID uint64, userAnswer string, isCorrect bool) error
-	IncrementScore(ctx context.Context, quizID uint64) error
+	SaveAnswer(ctx context.Context, quizID, questionID uint64, userAnswer string, isCorrect bool) error
 	CountUnanswered(ctx context.Context, quizID uint64) (int, error)
-	CompleteQuiz(ctx context.Context, quizID uint64) error
-	DistractorMeanings(ctx context.Context, callerID, excludeWordID uint64, n int) ([]string, error)
+	CompleteQuiz(ctx context.Context, quizID uint64) (bool, error)
+	DistractorMeanings(ctx context.Context, userID, excludeWordID uint64, correctMeaning string, n int) ([]string, error)
 }
 
 type Service interface {

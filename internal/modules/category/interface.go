@@ -11,7 +11,9 @@ type Repository interface {
 	Untag(ctx context.Context, vocabID, categoryID uint64) error
 	ListCategoriesForVocab(ctx context.Context, vocabID uint64) ([]Category, error)
 	VocabBelongsToUser(ctx context.Context, vocabID, userID uint64) (bool, error)
-	CountTagged(ctx context.Context, categoryID uint64) (int, error)
+	// CountTagged counts the user's own words in the category. Global
+	// categories are shared, so other users' tags must not count.
+	CountTagged(ctx context.Context, categoryID, userID uint64) (int, error)
 }
 
 type Service interface {

@@ -57,3 +57,12 @@ type MeResponse struct {
 	User        *UserResponse `json:"user"`
 	AccessToken string        `json:"accessToken,omitempty"`
 }
+
+type ForgotPasswordRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+type ResetPasswordRequest struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"newPassword" binding:"required"`
+}

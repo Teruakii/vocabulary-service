@@ -18,6 +18,8 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler, authSvc Service) {
 		a.GET("/me", middleware.OptionalAuth(authSvc), h.Me)
 		a.PUT("/me", middleware.RequireAuth(authSvc), h.UpdateProfile)
 		a.DELETE("/me", middleware.RequireAuth(authSvc), h.Delete)
+		a.POST("/forgot-password", h.ForgotPassword)
+		a.POST("/reset-password", h.ResetPassword)
 		a.POST("/change-password", middleware.RequireAuth(authSvc), h.ChangePassword)
 		a.POST("/admin/users/:id/reset-password",
 			middleware.RequireAuth(authSvc), middleware.RequireAdmin(), h.AdminResetPassword)

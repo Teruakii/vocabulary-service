@@ -19,11 +19,6 @@ func (m *MockRepository) Get(ctx context.Context, userID uint64) (*UserStats, er
 	return args.Get(0).(*UserStats), args.Error(1)
 }
 
-func (m *MockRepository) IncrementWordsLearned(ctx context.Context, userID uint64, now time.Time) error {
-	args := m.Called(ctx, userID, now)
-	return args.Error(0)
-}
-
 func (m *MockRepository) IncrementQuizzesTaken(ctx context.Context, userID uint64, now time.Time) error {
 	args := m.Called(ctx, userID, now)
 	return args.Error(0)
@@ -32,4 +27,13 @@ func (m *MockRepository) IncrementQuizzesTaken(ctx context.Context, userID uint6
 func (m *MockRepository) RecordActivity(ctx context.Context, userID uint64, now time.Time) error {
 	args := m.Called(ctx, userID, now)
 	return args.Error(0)
+}
+
+func (m *MockRepository) ActivitySince(ctx context.Context, userID uint64, from time.Time) (map[string]uint, error) {
+	args := m.Called(ctx, userID, from)
+	var counts map[string]uint
+	if args.Get(0) != nil {
+		counts = args.Get(0).(map[string]uint)
+	}
+	return counts, args.Error(1)
 }

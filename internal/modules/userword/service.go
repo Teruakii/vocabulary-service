@@ -11,51 +11,42 @@ import (
 	"vocabulary-service/internal/modules/word"
 )
 
-// StatsRecorder is the subset of stats.Service this module needs. It's
-// declared locally (rather than importing the stats package) to avoid a
-// module-to-module dependency; stats.Service already satisfies it.
-type StatsRecorder interface {
+// ActivityRecorder is the part of the stats module that reviews feed.
+type ActivityRecorder interface {
 	RecordActivity(ctx context.Context, userID uint64) error
-	RecordWordMastered(ctx context.Context, userID uint64) error
 }
 
 type service struct {
 	repo  Repository
 	word  word.Service
-	stats StatsRecorder
+	stats ActivityRecorder
 	now   func() time.Time
 }
 
-// NewService takes stats as an optional trailing argument so existing
-// callers/tests that only pass (repo, wordSvc) keep compiling. Pass a
-// StatsRecorder to wire up streaks / "words mastered" tracking.
-func NewService(repo Repository, wordSvc word.Service, stats ...StatsRecorder) Service {
-	var sr StatsRecorder
-	if len(stats) > 0 {
-		sr = stats[0]
-	}
-	return &service{repo: repo, word: wordSvc, stats: sr, now: time.Now}
+// NewService builds the user-word service; stats may be nil (e.g. in tests).
+func NewService(repo Repository, wordSvc word.Service, stats ActivityRecorder) Service {
+	return &service{repo: repo, word: wordSvc, stats: stats, now: time.Now}
 }
 
-// recordActivity is best-effort: a stats-tracking failure must never fail
-// the caller's actual request.
-func (s *service) recordActivity(ctx context.Context, userID uint64) {
+// recordReview updates the learner's stats after a saved review. Stats are
+// best-effort: a failure here must not undo or fail the review itself.
+func (s *service) recordReview(ctx context.Context, userID uint64) {
 	if s.stats == nil {
 		return
 	}
 	_ = s.stats.RecordActivity(ctx, userID)
 }
 
-func (s *service) recordIfNewlyMastered(ctx context.Context, userID uint64, wasStatus, isStatus Status) {
-	if s.stats == nil {
-		return
+// AddWord adds a global word or one of the caller's own. Another user's
+// private word reports not found, like a missing one.
+func (s *service) AddWord(ctx context.Context, userID, wordID uint64) (*UserWord, error) {
+	if _, err := s.word.GetByID(ctx, userID, wordID); err != nil {
+		return nil, err
 	}
-	if isStatus == StatusMastered && wasStatus != StatusMastered {
-		_ = s.stats.RecordWordMastered(ctx, userID)
-	}
+	return s.link(ctx, userID, wordID)
 }
 
-func (s *service) AddWord(ctx context.Context, userID, wordID uint64) (*UserWord, error) {
+func (s *service) link(ctx context.Context, userID, wordID uint64) (*UserWord, error) {
 	now := s.now()
 	uw := &UserWord{
 		UserID:       userID,
@@ -73,7 +64,6 @@ func (s *service) AddWord(ctx context.Context, userID, wordID uint64) (*UserWord
 		}
 		return nil, fmt.Errorf("add word %d for user %d: %w", wordID, userID, err)
 	}
-	s.recordActivity(ctx, userID)
 	return uw, nil
 }
 
@@ -83,7 +73,7 @@ func (s *service) AddCustomWord(ctx context.Context, userID uint64, wordStr, mea
 	if err != nil {
 		return nil, err
 	}
-	return s.AddWord(ctx, userID, w.ID)
+	return s.link(ctx, userID, w.ID)
 }
 
 func (s *service) GetByID(ctx context.Context, userID, id uint64) (*UserWord, error) {
@@ -101,9 +91,7 @@ func (s *service) GetByID(ctx context.Context, userID, id uint64) (*UserWord, er
 }
 
 func (s *service) List(ctx context.Context, userID uint64, status Status, categoryID *uint64, limit, offset int) ([]UserWordDetail, bool, error) {
-	if limit <= 0 {
-		limit = constants.DefaultListLimit
-	}
+	limit = constants.ListLimit(limit)
 	if offset < 0 {
 		offset = 0
 	}
@@ -115,9 +103,7 @@ func (s *service) List(ctx context.Context, userID uint64, status Status, catego
 }
 
 func (s *service) Due(ctx context.Context, userID uint64, limit int) ([]UserWordDetail, error) {
-	if limit <= 0 {
-		limit = constants.DefaultListLimit
-	}
+	limit = constants.ListLimit(limit)
 	items, err := s.repo.ListDue(ctx, userID, s.now(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list due user_word for user %d: %w", userID, err)
@@ -129,51 +115,36 @@ func (s *service) Review(ctx context.Context, userID, id uint64, quality int) (*
 	if quality < 0 || quality > 5 {
 		return nil, constants.ErrInvalidQuality
 	}
-
-	uw, err := s.GetByID(ctx, userID, id)
+	uw, err := s.repo.ReviewByID(ctx, userID, id, s.sm2(quality))
 	if err != nil {
-		return nil, err
-	}
-
-	prevStatus := uw.Status
-	applySM2(uw, quality, s.now())
-
-	if err := s.repo.Update(ctx, uw); err != nil {
 		if errors.Is(err, constants.ErrNotFound) {
 			return nil, constants.ErrUserWordNotFound
 		}
-		return nil, fmt.Errorf("update user_word %d: %w", id, err)
+		return nil, fmt.Errorf("review user_word %d: %w", id, err)
 	}
-	s.recordActivity(ctx, userID)
-	s.recordIfNewlyMastered(ctx, userID, prevStatus, uw.Status)
+	s.recordReview(ctx, userID)
 	return uw, nil
 }
+
 func (s *service) ReviewByWord(ctx context.Context, userID, wordID uint64, quality int) (*UserWord, error) {
 	if quality < 0 || quality > 5 {
 		return nil, constants.ErrInvalidQuality
 	}
-
-	uw, err := s.repo.GetByUserAndWord(ctx, userID, wordID)
+	uw, err := s.repo.ReviewByWord(ctx, userID, wordID, s.sm2(quality))
 	if err != nil {
 		if errors.Is(err, constants.ErrNotFound) {
 			return nil, constants.ErrUserWordNotFound
 		}
-		return nil, fmt.Errorf("get user_word for user %d word %d: %w", userID, wordID, err)
+		return nil, fmt.Errorf("review user_word for user %d word %d: %w", userID, wordID, err)
 	}
-
-	prevStatus := uw.Status
-	applySM2(uw, quality, s.now())
-
-	if err := s.repo.Update(ctx, uw); err != nil {
-		if errors.Is(err, constants.ErrNotFound) {
-			return nil, constants.ErrUserWordNotFound
-		}
-		return nil, fmt.Errorf("update user_word %d: %w", uw.ID, err)
-	}
-	s.recordActivity(ctx, userID)
-	s.recordIfNewlyMastered(ctx, userID, prevStatus, uw.Status)
+	s.recordReview(ctx, userID)
 	return uw, nil
 }
+
+func (s *service) sm2(quality int) func(*UserWord) {
+	return func(uw *UserWord) { applySM2(uw, quality, s.now()) }
+}
+
 func (s *service) Remove(ctx context.Context, userID, id uint64) error {
 	if _, err := s.GetByID(ctx, userID, id); err != nil {
 		return err

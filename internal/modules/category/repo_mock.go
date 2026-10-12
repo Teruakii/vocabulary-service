@@ -61,7 +61,7 @@ func (m *MockRepository) VocabBelongsToUser(ctx context.Context, vocabID, userID
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockRepository) CountTagged(ctx context.Context, categoryID uint64) (int, error) {
-	args := m.Called(ctx, categoryID)
+func (m *MockRepository) CountTagged(ctx context.Context, categoryID, userID uint64) (int, error) {
+	args := m.Called(ctx, categoryID, userID)
 	return args.Int(0), args.Error(1)
 }

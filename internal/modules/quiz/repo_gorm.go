@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"vocabulary-service/internal/constants"
 )
@@ -129,9 +130,6 @@ func (r *QuizRepoGorm) ListQuestions(ctx context.Context, quizID uint64) ([]ques
 }
 
 func (r *QuizRepoGorm) ListQuizzesByUser(ctx context.Context, userID uint64, limit, offset int) ([]Quiz, bool, error) {
-	if limit <= 0 {
-		limit = constants.DefaultListLimit
-	}
 	fetchLimit := limit + 1
 
 	var quizzes []Quiz
@@ -152,39 +150,41 @@ func (r *QuizRepoGorm) ListQuizzesByUser(ctx context.Context, userID uint64, lim
 	return quizzes, hasMore, nil
 }
 
-func (r *QuizRepoGorm) SaveAnswer(ctx context.Context, questionID uint64, userAnswer string, isCorrect bool) error {
-	// WHERE is_correct IS NULL makes this an atomic "answer once" guard at the DB
-	// level, so two concurrent requests for the same question can't both succeed
-	// (which used to let the score get incremented twice).
-	result := r.db.WithContext(ctx).Model(&Question{}).
-		Where("quiz_question_id = ? AND is_correct IS NULL", questionID).
-		Updates(map[string]interface{}{
-			"user_answer": userAnswer,
-			"is_correct":  isCorrect,
-		})
-	if result.Error != nil {
-		return fmt.Errorf("save answer: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		// Either the question doesn't exist, or it was already answered
-		// (possibly by a concurrent request). The caller already checked
-		// existence/ownership, so treat this as "already answered".
-		return constants.ErrQuestionAlreadyAnswered
-	}
-	return nil
-}
+// SaveAnswer records the answer and its point in one transaction. The quiz
+// row is locked first, so an answer cannot land after CompleteQuiz has
+// finished the quiz, and only an unanswered question is written, so two
+// concurrent answers cannot both score.
+func (r *QuizRepoGorm) SaveAnswer(ctx context.Context, quizID, questionID uint64, userAnswer string, isCorrect bool) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var q Quiz
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&q, quizID).Error; err != nil {
+			return fmt.Errorf("lock quiz: %w", err)
+		}
+		if q.IsCompleted() {
+			return constants.ErrQuizCompleted
+		}
 
-func (r *QuizRepoGorm) IncrementScore(ctx context.Context, quizID uint64) error {
-	result := r.db.WithContext(ctx).Model(&Quiz{}).
-		Where("quiz_id = ?", quizID).
-		Update("score", gorm.Expr("score + 1"))
-	if result.Error != nil {
-		return fmt.Errorf("increment score: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return constants.ErrNotFound
-	}
-	return nil
+		result := tx.Model(&Question{}).
+			Where("quiz_question_id = ? AND quiz_id = ? AND is_correct IS NULL", questionID, quizID).
+			Updates(map[string]interface{}{
+				"user_answer": userAnswer,
+				"is_correct":  isCorrect,
+			})
+		if result.Error != nil {
+			return fmt.Errorf("save answer: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return constants.ErrQuestionAlreadyAnswered
+		}
+
+		if isCorrect {
+			if err := tx.Model(&Quiz{}).Where("quiz_id = ?", quizID).
+				Update("score", gorm.Expr("score + 1")).Error; err != nil {
+				return fmt.Errorf("increment score: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 func (r *QuizRepoGorm) CountUnanswered(ctx context.Context, quizID uint64) (int, error) {
@@ -198,26 +198,27 @@ func (r *QuizRepoGorm) CountUnanswered(ctx context.Context, quizID uint64) (int,
 	return int(count), nil
 }
 
-func (r *QuizRepoGorm) CompleteQuiz(ctx context.Context, quizID uint64) error {
+// CompleteQuiz reports whether this call completed the quiz; false means it
+// was already completed.
+func (r *QuizRepoGorm) CompleteQuiz(ctx context.Context, quizID uint64) (bool, error) {
 	result := r.db.WithContext(ctx).Model(&Quiz{}).
 		Where("quiz_id = ? AND completed_at IS NULL", quizID).
 		Update("completed_at", time.Now())
 	if result.Error != nil {
-		return fmt.Errorf("complete quiz: %w", result.Error)
+		return false, fmt.Errorf("complete quiz: %w", result.Error)
 	}
-
-	return nil
+	return result.RowsAffected > 0, nil
 }
 
-func (r *QuizRepoGorm) DistractorMeanings(ctx context.Context, callerID, excludeWordID uint64, n int) ([]string, error) {
-	// Only pull distractors from words the caller can actually see (global
-	// words + their own words) so another user's private word meaning can
-	// never leak out as a multiple-choice option.
+// DistractorMeanings picks wrong answers only from words the user can see
+// (global ones and their own), never repeating the correct meaning.
+func (r *QuizRepoGorm) DistractorMeanings(ctx context.Context, userID, excludeWordID uint64, correctMeaning string, n int) ([]string, error) {
 	var meanings []string
 	err := r.db.WithContext(ctx).
 		Table("word").
-		Select("meaning").
-		Where("word_id != ? AND (owner_user_id IS NULL OR owner_user_id = ?)", excludeWordID, callerID).
+		Distinct("meaning").
+		Where("word_id != ? AND meaning != ?", excludeWordID, correctMeaning).
+		Where("owner_user_id IS NULL OR owner_user_id = ?", userID).
 		Order("RAND()").
 		Limit(n).
 		Pluck("meaning", &meanings).Error

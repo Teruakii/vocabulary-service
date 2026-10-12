@@ -8,7 +8,20 @@ const (
 	FAILED_TO_GENERATE_TOKEN = "FAILED_TO_GENERATE_TOKEN"
 )
 
-const DefaultListLimit = 20
+const (
+	DefaultListLimit = 20
+	MaxListLimit     = 100
+)
+
+// ListLimit is the page size for a requested limit: the default when none is
+// given, and never more than MaxListLimit so one request cannot pull a whole
+// table.
+func ListLimit(requested int) int {
+	if requested <= 0 {
+		return DefaultListLimit
+	}
+	return min(requested, MaxListLimit)
+}
 
 const MaxWordsPerCategory = 20
 
@@ -22,11 +35,14 @@ var (
 	ErrEmailEmpty               = errors.New("email must not be empty")
 	ErrEmailDuplicate           = errors.New("email already registered")
 	ErrPasswordTooShort         = errors.New("password is too short")
+	ErrPasswordTooLong          = errors.New("password must be at most 72 bytes")
 	ErrInvalidCredentials       = errors.New("invalid credentials")
 	ErrIdentityInvalid          = errors.New("invalid identity")
 	ErrIdentityDuplicate        = errors.New("identity already linked")
 	ErrIdentityNotFound         = errors.New("identity not found")
 	ErrCannotUnlinkLastIdentity = errors.New("cannot unlink your only sign-in method")
+	ErrPasswordResetUnavailable = errors.New("password reset is not available")
+	ErrResetTokenInvalid        = errors.New("invalid or expired reset link")
 )
 
 var (

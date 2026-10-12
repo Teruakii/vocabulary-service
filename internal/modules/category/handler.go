@@ -31,6 +31,10 @@ func writeServiceError(c *gin.Context, err error) {
 		response.ErrorMsg(c, http.StatusForbidden, "cannot modify this category")
 	case errors.Is(err, constants.ErrTagDuplicate):
 		response.ErrorMsg(c, http.StatusConflict, "word already tagged with this category")
+	case errors.Is(err, constants.ErrTagNotFound):
+		response.ErrorMsg(c, http.StatusNotFound, "tag not found")
+	case errors.Is(err, constants.ErrCategoryNameEmpty):
+		response.Error(c, http.StatusBadRequest, err)
 	case errors.Is(err, constants.ErrCategoryFull):
 		response.ErrorMsg(c, http.StatusConflict, fmt.Sprintf("this category already has %d words, the max per category", constants.MaxWordsPerCategory))
 	default:
@@ -46,7 +50,7 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	var req CreateCategoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.ErrorMsg(c, http.StatusBadRequest, err.Error())
+		response.Error(c, http.StatusBadRequest, err)
 		return
 	}
 	view, err := h.svc.Create(c.Request.Context(), userID, req.Name)
@@ -54,7 +58,7 @@ func (h *Handler) Create(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, view)
+	response.OK(c, http.StatusCreated, view)
 }
 
 func (h *Handler) List(c *gin.Context) {
@@ -68,7 +72,7 @@ func (h *Handler) List(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
+	response.OK(c, http.StatusOK, gin.H{"items": items})
 }
 
 func (h *Handler) Delete(c *gin.Context) {
@@ -86,7 +90,7 @@ func (h *Handler) Delete(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.Status(http.StatusNoContent)
+	response.NoContent(c)
 }
 
 func (h *Handler) Tag(c *gin.Context) {
@@ -104,7 +108,7 @@ func (h *Handler) Tag(c *gin.Context) {
 		CategoryID uint64 `json:"categoryId" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.ErrorMsg(c, http.StatusBadRequest, err.Error())
+		response.Error(c, http.StatusBadRequest, err)
 		return
 	}
 	if err := h.svc.Tag(c.Request.Context(), userID, vocabID, req.CategoryID); err != nil {
@@ -120,7 +124,7 @@ func (h *Handler) Untag(c *gin.Context) {
 		response.ErrorMsg(c, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	vocabID, err := strconv.ParseUint(c.Param("vocabId"), 10, 64)
+	vocabID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		response.ErrorMsg(c, http.StatusBadRequest, "invalid vocab id")
 		return
@@ -134,7 +138,7 @@ func (h *Handler) Untag(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.Status(http.StatusNoContent)
+	response.NoContent(c)
 }
 
 func (h *Handler) ListForVocab(c *gin.Context) {
@@ -143,7 +147,7 @@ func (h *Handler) ListForVocab(c *gin.Context) {
 		response.ErrorMsg(c, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	vocabID, err := strconv.ParseUint(c.Param("vocabId"), 10, 64)
+	vocabID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		response.ErrorMsg(c, http.StatusBadRequest, "invalid vocab id")
 		return
@@ -153,5 +157,5 @@ func (h *Handler) ListForVocab(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
+	response.OK(c, http.StatusOK, gin.H{"items": items})
 }

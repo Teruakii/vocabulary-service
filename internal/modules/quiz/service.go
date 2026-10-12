@@ -86,9 +86,7 @@ func (s *service) Get(ctx context.Context, userID, quizID uint64) (*QuizDetail, 
 }
 
 func (s *service) List(ctx context.Context, userID uint64, limit, offset int) ([]QuizSummary, bool, error) {
-	if limit <= 0 {
-		limit = constants.DefaultListLimit
-	}
+	limit = constants.ListLimit(limit)
 	if offset < 0 {
 		offset = 0
 	}
@@ -140,23 +138,23 @@ func (s *service) Answer(ctx context.Context, userID, quizID, questionID uint64,
 	}
 	isCorrect := strings.EqualFold(answer, strings.TrimSpace(q.Meaning))
 
-	if err := s.repo.SaveAnswer(ctx, questionID, answer, isCorrect); err != nil {
-		return nil, fmt.Errorf("save answer for question %d: %w", questionID, err)
-	}
-	if isCorrect {
-		if err := s.repo.IncrementScore(ctx, quizID); err != nil {
-			return nil, fmt.Errorf("increment score for quiz %d: %w", quizID, err)
+	if err := s.repo.SaveAnswer(ctx, quizID, questionID, answer, isCorrect); err != nil {
+		if errors.Is(err, constants.ErrQuestionAlreadyAnswered) || errors.Is(err, constants.ErrQuizCompleted) {
+			return nil, err
 		}
+		return nil, fmt.Errorf("save answer for question %d: %w", questionID, err)
 	}
 
 	if remaining, err := s.repo.CountUnanswered(ctx, quizID); err != nil {
 		return nil, fmt.Errorf("count unanswered for quiz %d: %w", quizID, err)
 	} else if remaining == 0 {
-		if err := s.repo.CompleteQuiz(ctx, quizID); err != nil {
+		completed, err := s.repo.CompleteQuiz(ctx, quizID)
+		if err != nil {
 			return nil, fmt.Errorf("complete quiz %d: %w", quizID, err)
 		}
-
-		s.recordQuizCompleted(ctx, userID)
+		if completed {
+			s.recordQuizCompleted(ctx, userID)
+		}
 	}
 
 	s.feedSRS(ctx, userID, q.WordID, isCorrect)
@@ -185,10 +183,13 @@ func (s *service) Complete(ctx context.Context, userID, quizID uint64) (*QuizDet
 		return nil, err
 	}
 	if !quizModel.IsCompleted() {
-		if err := s.repo.CompleteQuiz(ctx, quizID); err != nil {
+		completed, err := s.repo.CompleteQuiz(ctx, quizID)
+		if err != nil {
 			return nil, fmt.Errorf("complete quiz %d: %w", quizID, err)
 		}
-		s.recordQuizCompleted(ctx, userID)
+		if completed {
+			s.recordQuizCompleted(ctx, userID)
+		}
 	}
 	return s.Get(ctx, userID, quizID)
 }
@@ -215,7 +216,7 @@ func (s *service) toPromptView(ctx context.Context, userID uint64, q questionWit
 		QuestionType: q.QuestionType,
 	}
 	if q.QuestionType == QuestionMultipleChoice {
-		distractors, err := s.repo.DistractorMeanings(ctx, userID, q.WordID, multipleChoiceOptionCount-1)
+		distractors, err := s.repo.DistractorMeanings(ctx, userID, q.WordID, q.Meaning, multipleChoiceOptionCount-1)
 		if err != nil {
 			return QuestionView{}, err
 		}

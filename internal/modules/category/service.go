@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"vocabulary-service/internal/constants"
 )
@@ -17,6 +18,10 @@ func NewService(repo Repository) Service {
 }
 
 func (s *service) Create(ctx context.Context, userID uint64, name string) (*CategoryView, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, constants.ErrCategoryNameEmpty
+	}
 	c := &Category{UserID: &userID, Name: name}
 	if err := s.repo.Create(ctx, c); err != nil {
 		return nil, fmt.Errorf("create category for user %d: %w", userID, err)
@@ -31,7 +36,7 @@ func (s *service) List(ctx context.Context, userID uint64) ([]CategoryView, erro
 	}
 	views := make([]CategoryView, len(cats))
 	for i := range cats {
-		count, err := s.repo.CountTagged(ctx, cats[i].ID)
+		count, err := s.repo.CountTagged(ctx, cats[i].ID, userID)
 		if err != nil {
 			return nil, fmt.Errorf("count words in category %d: %w", cats[i].ID, err)
 		}
@@ -65,7 +70,7 @@ func (s *service) Tag(ctx context.Context, userID, vocabID, categoryID uint64) e
 		return err
 	}
 
-	count, err := s.repo.CountTagged(ctx, categoryID)
+	count, err := s.repo.CountTagged(ctx, categoryID, userID)
 	if err != nil {
 		return fmt.Errorf("count words in category %d: %w", categoryID, err)
 	}
@@ -87,6 +92,9 @@ func (s *service) Untag(ctx context.Context, userID, vocabID, categoryID uint64)
 		return err
 	}
 	if err := s.repo.Untag(ctx, vocabID, categoryID); err != nil {
+		if errors.Is(err, constants.ErrNotFound) {
+			return constants.ErrTagNotFound
+		}
 		return fmt.Errorf("untag vocab %d from category %d: %w", vocabID, categoryID, err)
 	}
 	return nil
@@ -106,7 +114,7 @@ func (s *service) ListForVocab(ctx context.Context, userID, vocabID uint64) ([]C
 	}
 	views := make([]CategoryView, len(cats))
 	for i := range cats {
-		count, err := s.repo.CountTagged(ctx, cats[i].ID)
+		count, err := s.repo.CountTagged(ctx, cats[i].ID, userID)
 		if err != nil {
 			return nil, fmt.Errorf("count words in category %d: %w", cats[i].ID, err)
 		}

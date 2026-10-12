@@ -57,13 +57,8 @@ func (m *MockRepository) ListQuizzesByUser(ctx context.Context, userID uint64, l
 	return qs, args.Bool(1), args.Error(2)
 }
 
-func (m *MockRepository) SaveAnswer(ctx context.Context, questionID uint64, userAnswer string, isCorrect bool) error {
-	args := m.Called(ctx, questionID, userAnswer, isCorrect)
-	return args.Error(0)
-}
-
-func (m *MockRepository) IncrementScore(ctx context.Context, quizID uint64) error {
-	args := m.Called(ctx, quizID)
+func (m *MockRepository) SaveAnswer(ctx context.Context, quizID, questionID uint64, userAnswer string, isCorrect bool) error {
+	args := m.Called(ctx, quizID, questionID, userAnswer, isCorrect)
 	return args.Error(0)
 }
 
@@ -72,13 +67,13 @@ func (m *MockRepository) CountUnanswered(ctx context.Context, quizID uint64) (in
 	return args.Int(0), args.Error(1)
 }
 
-func (m *MockRepository) CompleteQuiz(ctx context.Context, quizID uint64) error {
+func (m *MockRepository) CompleteQuiz(ctx context.Context, quizID uint64) (bool, error) {
 	args := m.Called(ctx, quizID)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockRepository) DistractorMeanings(ctx context.Context, callerID, excludeWordID uint64, n int) ([]string, error) {
-	args := m.Called(ctx, callerID, excludeWordID, n)
+func (m *MockRepository) DistractorMeanings(ctx context.Context, userID, excludeWordID uint64, correctMeaning string, n int) ([]string, error) {
+	args := m.Called(ctx, userID, excludeWordID, correctMeaning, n)
 	var meanings []string
 	if args.Get(0) != nil {
 		meanings = args.Get(0).([]string)

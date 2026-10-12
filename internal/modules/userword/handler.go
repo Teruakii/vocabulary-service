@@ -24,6 +24,8 @@ func writeServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, constants.ErrUserWordNotFound):
 		response.ErrorMsg(c, http.StatusNotFound, "user word not found")
+	case errors.Is(err, constants.ErrWordNotFound):
+		response.ErrorMsg(c, http.StatusNotFound, "word not found")
 	case errors.Is(err, constants.ErrUserWordDuplicate):
 		response.ErrorMsg(c, http.StatusConflict, "word already added")
 	case errors.Is(err, constants.ErrInvalidQuality):
@@ -46,7 +48,7 @@ func (h *Handler) AddWord(c *gin.Context) {
 
 	var req AddWordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.ErrorMsg(c, http.StatusBadRequest, err.Error())
+		response.Error(c, http.StatusBadRequest, err)
 		return
 	}
 
@@ -67,7 +69,7 @@ func (h *Handler) AddWord(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, uw)
+	response.OK(c, http.StatusCreated, uw)
 }
 
 func (h *Handler) GetByID(c *gin.Context) {
@@ -88,7 +90,7 @@ func (h *Handler) GetByID(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, uw)
+	response.OK(c, http.StatusOK, uw)
 }
 
 func (h *Handler) List(c *gin.Context) {
@@ -117,7 +119,7 @@ func (h *Handler) List(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items, "hasMore": hasMore})
+	response.OK(c, http.StatusOK, gin.H{"items": items, "hasMore": hasMore})
 }
 
 func (h *Handler) Due(c *gin.Context) {
@@ -134,7 +136,7 @@ func (h *Handler) Due(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
+	response.OK(c, http.StatusOK, gin.H{"items": items})
 }
 
 func (h *Handler) Review(c *gin.Context) {
@@ -152,16 +154,16 @@ func (h *Handler) Review(c *gin.Context) {
 
 	var req ReviewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.ErrorMsg(c, http.StatusBadRequest, err.Error())
+		response.Error(c, http.StatusBadRequest, err)
 		return
 	}
 
-	uw, err := h.svc.Review(c.Request.Context(), userID, id, req.Quality)
+	uw, err := h.svc.Review(c.Request.Context(), userID, id, *req.Quality)
 	if err != nil {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, uw)
+	response.OK(c, http.StatusOK, uw)
 }
 
 func (h *Handler) ReviewByWord(c *gin.Context) {
@@ -179,16 +181,16 @@ func (h *Handler) ReviewByWord(c *gin.Context) {
 
 	var req ReviewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.ErrorMsg(c, http.StatusBadRequest, err.Error())
+		response.Error(c, http.StatusBadRequest, err)
 		return
 	}
 
-	uw, err := h.svc.ReviewByWord(c.Request.Context(), userID, wordID, req.Quality)
+	uw, err := h.svc.ReviewByWord(c.Request.Context(), userID, wordID, *req.Quality)
 	if err != nil {
 		writeServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, uw)
+	response.OK(c, http.StatusOK, uw)
 }
 
 func (h *Handler) Remove(c *gin.Context) {
@@ -208,5 +210,5 @@ func (h *Handler) Remove(c *gin.Context) {
 		writeServiceError(c, err)
 		return
 	}
-	c.Status(http.StatusNoContent)
+	response.NoContent(c)
 }
