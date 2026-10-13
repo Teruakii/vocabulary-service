@@ -1,7 +1,11 @@
 # vocabulary-service
 
-Backend API ของเว็บจำศัพท์ภาษาอังกฤษ **LexiMaster** เขียนด้วย Go (Gin + GORM + MySQL)
-รองรับการสมัครสมาชิก, login ด้วยรหัสผ่านหรือ Google, ทบทวนคำศัพท์แบบ spaced repetition (SM-2),
+เว็บจำศัพท์ภาษาอังกฤษ **LexiMaster** ทั้ง backend และ frontend ใน repo เดียว
+
+- **Backend** (โฟลเดอร์ root) เขียนด้วย Go (Gin + GORM + MySQL)
+- **Frontend** (โฟลเดอร์ `frontend/`) เขียนด้วย Vue 3 + TypeScript + Vite
+
+รองรับการสมัครสมาชิก, login ด้วยรหัสผ่านหรือ Google, Flashcard ทบทวนคำแบบ spaced repetition (SM-2),
 แบบทดสอบ, หมวดหมู่คำ และสถิติการเรียนรายวัน
 
 ## ฟีเจอร์
@@ -14,6 +18,18 @@ Backend API ของเว็บจำศัพท์ภาษาอังก�
 - **แบบทดสอบ**: แบบพิมพ์คำตอบและแบบเลือกตอบ 4 ตัวเลือก คำตอบป้อนกลับเข้า SM-2 อัตโนมัติ
 - **หมวดหมู่**: จัดคำของตัวเองเข้าหมวด หมวดละไม่เกิน 20 คำต่อผู้ใช้
 - **สถิติ**: streak รายวัน, คำที่จำได้, จำนวนแบบทดสอบ, กราฟกิจกรรมย้อนหลัง
+
+### หน้าเว็บ (frontend)
+
+- **แดชบอร์ด**: คำที่ถึงกำหนดวันนี้, สถิติ, กราฟกิจกรรม 7 วัน
+- **Flashcard**: เลือกชุดก่อนเล่น ได้แก่ คำที่ถึงกำหนดทบทวน, คำของฉันทั้งหมด หรือทีละหมวดหมู่
+  กด Space เพื่อพลิกการ์ด กด 1-4 ให้คะแนน (ลืม / ยาก / ดี / ง่าย) ชุดที่เลือกเก็บใน URL (`/review?deck=c7`) รีเฟรชแล้วเล่นต่อได้
+- **คำของฉัน / คลังคำศัพท์**: เพิ่มคำส่วนตัว, เพิ่มคำจากคลังเข้ารายการ, กรองตามสถานะและหมวด
+- **หมวดหมู่**: ปุ่ม "จัดคำ" เปิดหน้าต่างติ๊กเลือกคำเข้าหมวดได้ในที่เดียว (ค้นหาได้, บอกจำนวน x / 20)
+  และปุ่ม Flashcard เล่นการ์ดของหมวดนั้นทันที
+- **แบบทดสอบ**: เลือกจำนวนข้อและแหล่งคำ, ทำต่อจากที่ค้างไว้ได้
+- **Navbar**: streak และเมนูตั้งค่า (อีเมล, โปรไฟล์และบัญชี, ออกจากระบบ)
+- ใช้ได้บนมือถือ (แถบเมนูล่าง) และข้อความ error ทุกจุดเป็นภาษาไทย
 
 ## ความปลอดภัยที่ออกแบบไว้
 
@@ -28,6 +44,7 @@ Backend API ของเว็บจำศัพท์ภาษาอังก�
 ## โครงสร้างโปรเจกต์
 
 ```
+frontend/                    เว็บ Vue 3 (ดูหัวข้อ Frontend ด้านล่าง)
 cmd/main.go                  จุดเริ่มต้น: config, migrate, router, graceful shutdown
 internal/config              อ่าน environment variables
 internal/constants           sentinel errors, role, provider, ขนาดหน้า
@@ -44,7 +61,9 @@ internal/modules/<module>    auth, word, userword, category, quiz, stats
 
 ## เริ่มใช้งาน
 
-ต้องมี Go 1.26+ และ MySQL 8 (หรือ Docker)
+ต้องมี Go 1.26+, MySQL 8 (หรือ Docker) และ Node.js 22.18+ สำหรับ frontend
+
+### Backend
 
 ```bash
 cp .env.example .env          # แล้วใส่ JWT_SECRET_KEY อย่างน้อย
@@ -66,6 +85,21 @@ container อ่านค่าจาก `.env` ตอนรัน (ไม่ฝ
 
 ```bash
 go test ./...
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev                   # เว็บที่ http://localhost:5173
+```
+
+dev server ส่งต่อ `/api` ไปที่ backend `http://localhost:8085`
+ถ้ารัน backend ด้วย Docker (พอร์ต 8005) ให้ตั้ง `API_TARGET=http://localhost:8005` ก่อน `npm run dev`
+
+```bash
+npm run build                 # type-check + build ไปที่ frontend/dist
 ```
 
 ## Environment variables
@@ -154,5 +188,17 @@ endpoint ที่มี 🔒 ต้องส่ง `Authorization: Bearer <acce
 
 ## Frontend
 
-เว็บ frontend (Vue 3 + TypeScript + Vite) เรียก API นี้ผ่าน proxy `/api` ไปที่ `http://localhost:8085`
-ตั้ง `FRONTEND_URL` และ `GOOGLE_OAUTH_REDIRECT_URL` ให้ชี้ไปที่ origin ของ frontend (dev: `http://localhost:5173`)
+```
+frontend/src/api/client.ts   จุดเดียวที่เรียก API: แนบ token, ต่ออายุ session อัตโนมัติ, แปล error เป็นภาษาไทย
+frontend/src/router          เส้นทางหน้าเว็บ + กันหน้าที่ต้อง login
+frontend/src/layouts         AppLayout (sidebar + navbar), FocusLayout (Flashcard / ทำข้อสอบ), AuthLayout
+frontend/src/views           หน้าเว็บแต่ละหน้า
+frontend/src/components      ส่วนประกอบที่ใช้ซ้ำ เช่น หน้าต่างจัดคำในหมวด
+frontend/src/styles          design tokens (สี, ตัวอักษร, ระยะ) และ class กลาง
+frontend/DESIGN.md           ระบบดีไซน์: สีหลักน้ำเงิน #4255ff, ปุ่มนูนแบบเกม, ฟอนต์ Nunito + Prompt
+```
+
+กติกาการเขียนหน้าใหม่ (เรียก API ผ่าน client เท่านั้น, ปุ่มหลักหนึ่งปุ่มต่อหน้า ฯลฯ) อยู่ใน `frontend/src/README-FOUNDATION.md`
+
+ตั้ง `FRONTEND_URL` และ `GOOGLE_OAUTH_REDIRECT_URL` ของ backend ให้ชี้ไปที่ origin ของ frontend (dev: `http://localhost:5173`)
+เพื่อให้ Google login และลิงก์รีเซ็ตรหัสผ่านพากลับมาที่หน้าเว็บ
